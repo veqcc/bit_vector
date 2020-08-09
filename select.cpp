@@ -8,7 +8,7 @@ const int n = 1 << 16;
 const int word_size = 8;
 vector<uint8_t> bits(n / word_size);
 
-const int block_count = 16 * 16;
+const int block_count = 16 * 16 - 2;
 const int tree_total_size = 1 + 4 + 16 + 64 + 256 + 1024 + 4096 + 4096 * 4;
 vector<bool> is_big;
 vector<uint16_t> ptr;
@@ -47,7 +47,7 @@ void preprocess() {
                 is_big.push_back(true);
                 ptr.push_back(big_idx);
                 big_block.push_back({});
-                int base = i - len + 1;
+                int base = i - len;
                 for (int j = 0; j < len; j++) {
                     if (bits[(base + j) / word_size] & (1 << ((base + j) % word_size))) {
                         big_block[big_idx].push_back(base + j);
@@ -58,29 +58,22 @@ void preprocess() {
                 is_big.push_back(false);
                 ptr.push_back(small_idx);
                 tree.push_back(vector<uint8_t>(tree_total_size, 0));
-                int base = i - len + 1;
+                int base = i - len;
                 int tree_leaf = 1 + 4 + 16 + 64 + 256 + 1024 + 4096;
                 int s = 8;
-                for (int j = 0; j < len / s; j++) {
+                for (int j = 0; j <= len / s; j++) {
                     int cnt = 0;
                     for (int k = 0; k < s; k++) {
-                        if (bits[(base + j * s + k) / word_size] & (1 << ((base + j * 4 + k) % word_size))) {
+                        if (base + j * s + k > i) break;
+                        if (bits[(base + j * s + k) / word_size] & (1 << ((base + j * s + k) % word_size))) {
                             cnt++;
                         }
                     }
                     int idx = tree_leaf + j;
-                    tree[small_idx][idx] = 0;
                     while (true) {
                         tree[small_idx][idx] += cnt;
                         if (idx == 0) break;
                         idx = (idx - 1) / 4;
-                    }
-
-                    if (small_idx == 0) {
-                        //cout << cnt << endl;
-                        for (int i = 0; i < tree_total_size; i++) {
-                            // cout << (int)tree[small_idx][i] << endl;
-                        }
                     }
                 }
                 small_idx++;
@@ -99,7 +92,6 @@ void preprocess_lookup_table() {
         for (int j = 0; j < word_size; j++) {
             if (i & (1 << j)) {
                 lookup_table[i][cur] = j;
-                cout << i << ' ' << cur << ' ' << lookup_table[i][cur] << endl;
                 cur++;
             }
         }
@@ -107,69 +99,74 @@ void preprocess_lookup_table() {
 }
 
 int select1_efficient(int idx) {
-    int block_idx = (idx + block_count) / block_count;
+    int block_idx = idx / block_count;
     idx %= block_count;
+    if (idx == 0) {
+        return original_idx[block_idx] - 1;
+    }
+
     if (is_big[block_idx]) {
         int big_idx = ptr[block_idx];
         return big_block[big_idx][idx];
     } else {
         int tree_idx = ptr[block_idx];
-        idx++;
         int leaf_idx = 0;
-        int cur = 0;
+        int cur = -1;
         for (int i = 0; i < 7; i++) {
             for (int j = 1; j <= 4; j++) {
-                // cout << (int)tree[tree_idx][leaf_idx * 4 + j] << ' ' << cur << endl;
-                if (tree[tree_idx][leaf_idx * 4 + j] + cur < idx) {
-                    cur += (int)tree[tree_idx][leaf_idx * 4 + j];
+                int child = leaf_idx * 4 + j;
+                if (tree[tree_idx][child] + cur <= idx) {
+                    cur += tree[tree_idx][child];
                 } else {
-                    leaf_idx = leaf_idx * 4 + j;
+                    leaf_idx = child;
                     break;
                 }
             }
-            // cout << "leaf idx: " << leaf_idx << endl;
         }
 
         int leaf_start = 1 + 4 + 16 + 64 + 256 + 1024 + 4096;
-        // cout << "leaf start: " << leaf_start << endl;
-        int word = bits[original_idx[block_idx - 1] / word_size + leaf_idx - leaf_start];
 
         int ans = 0;
-        ans += original_idx[block_idx - 1];
-        cout << ans << ' ';
+        ans += original_idx[block_idx];
         ans += (leaf_idx - leaf_start) * word_size;
-        cout << ans << ' ';
-        ans += lookup_table[word][idx - cur];
+
+        int pos = original_idx[block_idx] + (leaf_idx - leaf_start) * word_size;
+        while (cur <= idx) {
+            if (bits[pos / word_size] & (1 << (pos % word_size))) {
+                cur++;
+            }
+            pos++;
+            ans++;
+        }
 
         return ans;
     }
 }
 
 int main() {
-    std::random_device device;
-    std::mt19937 generator(device());
+    mt19937 generator(1234);
 
     for (int i = 0; i < n; i++) {
-        std::uniform_int_distribution<int> distribution(0, 1 << 8);
+        uniform_int_distribution<int> distribution(0, 1 << 8);
         bits[i] = static_cast<uint8_t>(distribution(generator));
     }
 
     preprocess();
     preprocess_lookup_table();
 
-    for (int i = 0; i < 2; i++) {
-        std::uniform_int_distribution<int> distribution(0, n - 1);
-        auto idx = distribution(generator) / 5;
-        std::cout << "\nselect " << idx << "th" << std::endl;
-
-        cout << "naive:     " << select1_naive(idx) << endl;
-        cout << "efficient: " << select1_efficient(idx) << endl;
-    }
-
     cout << "ptr:" << ptr.size() * 16 << endl;
     cout << "tree_total_size: " << tree_total_size << endl;
     cout << "big_block : " << big_block.size() << endl;
     cout << "tree : " << tree.size() << endl;
+
+    for (int i = 0; i < 10; i++) {
+        uniform_int_distribution<int> distribution(0, n - 1);
+        auto idx = distribution(generator) / 5;
+        cout << "\nselect " << idx << "th" << endl;
+
+        cout << "naive:     " << select1_naive(idx) << endl;
+        cout << "efficient: " << select1_efficient(idx) << endl;
+    }
 
     return 0;
 }
